@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ブロック崩しゲーム</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            flex-direction: column;
+        }
+
+        .game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+            border-radius: 1rem;
+            background: #ffffff;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+
+        canvas {
+            border: 2px solid #cbd5e1;
+            background-color: #e2e8f0;
+            border-radius: 0.5rem;
+            touch-action: none; /* タッチイベントを有効にする */
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1rem;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .button {
+            padding: 0.75rem 1.5rem;
+            font-weight: bold;
+            border-radius: 0.5rem;
+            background-color: #4f46e5;
+            color: white;
+            transition: transform 0.2s, background-color 0.2s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .button:hover {
+            background-color: #4338ca;
+            transform: translateY(-2px);
+        }
+
+        .message-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 2rem;
+            border-radius: 1rem;
+            text-align: center;
+            display: none;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+<div class="game-container">
+    <h1 class="text-3xl font-bold text-gray-800 mb-4">落ちてくる壁ゲーム</h1>
+    <canvas id="gameCanvas" width="400" height="600"></canvas>
+    <div class="controls">
+        <button id="startButton" class="button">ゲーム開始</button>
+        <button id="resetButton" class="button">リセット</button>
+    </div>
+</div>
+
+<div id="messageBox" class="message-box">
+    <p id="messageText" class="text-xl"></p>
+    <button id="messageButton" class="button mt-4">OK</button>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const startButton = document.getElementById('startButton');
+        const resetButton = document.getElementById('resetButton');
+        const messageBox = document.getElementById('messageBox');
+        const messageText = document.getElementById('messageText');
+        const messageButton = document.getElementById('messageButton');
+
+        let animationFrameId;
+        let wallIntervalId;
+        let timerIntervalId;
+
+        // ゲームの状態
+        let gameActive = false;
+        let walls = [];
+        let balls = [];
+        let score = 0;
+        let time = 0;
+        let startTime = 0;
+
+        // ボール
+        const ballDefaults = {
+            radius: 10,
+            color: '#ef4444',
+            speed: 5
+        };
+
+        // パドル
+        const PADDLE_INITIAL_WIDTH = 80; // 元の幅を定数として保持
+        const paddle = {
+            x: canvas.width / 2 - (PADDLE_INITIAL_WIDTH * 1.5) / 2, // 新しい幅に合わせてx座標を調整
+            y: canvas.height - 30,
+            width: PADDLE_INITIAL_WIDTH * 1.5, // 幅を1.5倍に
+            height: 10,
+            color: '#1d4ed8'
+        };
+
+        // 新しいボールを追加する関数
+        function addBall() {
+            const newBall = {
+                x: canvas.width / 2,
+                y: canvas.height - 60,
+                ...ballDefaults,
+                dx: (Math.random() > 0.5 ? 1 : -1) * ballDefaults.speed,
+                dy: -ballDefaults.speed
+            };
+            balls.push(newBall);
+        }
+
+        // 破壊可能な壁を作成
+        function createFallingWall() {
+            // ランダムな位置と幅で壁を生成
+            const wallWidth = Math.random() * (200 - 50) + 50;
+            const wallX = Math.random() * (canvas.width - wallWidth);
+            walls.push({
+                x: wallX,
+                y: 0,
+                width: wallWidth,
+                height: 20,
+                color: '#64748b'
+            });
+        }
+
+        // ゲームのリセット
+        function resetGame() {
+            gameActive = false;
+            balls = [];
+            addBall(); // 最初のボールを一つ追加
+            paddle.x = canvas.width / 2 - paddle.width / 2; // パドルの位置を再調整
+            walls.length = 0;
+            score = 0;
+            time = 0;
+            draw();
+            startButton.style.display = 'block';
+            resetButton.style.display = 'none';
+        }
+
+        // メッセージを表示
+        function showMessage(text, buttonText = "OK") {
+            messageText.textContent = text;
+            messageButton.textContent = buttonText;
+            messageBox.style.display = 'block';
+        }
+
+        // メッセージを非表示
+        function hideMessage() {
+            messageBox.style.display = 'none';
+        }
+
+        // 描画
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // UIを描画
+            drawUI();
+
+            // 壁を描画
+            walls.forEach(wall => {
+                ctx.fillStyle = wall.color;
+                ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+            });
+
+            // パドルを描画
+            ctx.fillStyle = paddle.color;
+            ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+
+            // ボールを描画
+            balls.forEach(ball => {
+                ctx.beginPath();
+                ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+                ctx.fillStyle = ball.color;
+                ctx.fill();
+                ctx.closePath();
+            });
+        }
+        
+        // スコアとタイマーを描画
+        function drawUI() {
+            ctx.font = '20px "Inter"';
+            ctx.fillStyle = '#333';
+            ctx.textAlign = 'left';
+            ctx.fillText(`スコア: ${score}`, 10, 30);
+            
+            ctx.textAlign = 'right';
+            ctx.fillText(`時間: ${time}秒`, canvas.width - 10, 30);
+        }
+
+        // 衝突判定
+        function checkCollision() {
+            // ボールと壁の衝突
+            balls.forEach(ball => {
+                walls = walls.filter(wall => {
+                    if (ball.x + ball.radius > wall.x &&
+                        ball.x - ball.radius < wall.x + wall.width &&
+                        ball.y + ball.radius > wall.y &&
+                        ball.y - ball.radius < wall.y + wall.height) {
+
+                        // ボールを跳ね返らせる
+                        if (ball.x < wall.x || ball.x > wall.x + wall.width) {
+                            ball.dx *= -1;
+                        }
+                        if (ball.y < wall.y || ball.y > wall.y + wall.height) {
+                            ball.dy *= -1;
+                        }
+
+                        // スコアを加算
+                        score += 10;
+
+                        // 30%の確率で新しいボールを生成
+                        if (Math.random() < 0.3) {
+                            addBall();
+                        }
+
+                        // 衝突した壁は削除
+                        return false;
+                    }
+                    return true;
+                });
+            });
+
+            // ボールとパドルの衝突
+            balls.forEach(ball => {
+                if (ball.y + ball.radius > paddle.y && ball.y < paddle.y + paddle.height &&
+                    ball.x > paddle.x && ball.x < paddle.x + paddle.width) {
+                    
+                    const relativeIntersectX = (paddle.x + (paddle.width / 2)) - ball.x;
+                    const normalizedRelativeIntersectionX = relativeIntersectX / (paddle.width / 2);
+                    
+                    const angle = normalizedRelativeIntersectionX * Math.PI / 3;
+                    ball.dx = -ball.speed * Math.sin(angle);
+                    ball.dy = -ball.speed * Math.cos(angle);
+                }
+            });
+        }
+
+        // ゲームループ
+        function gameLoop() {
+            if (!gameActive) {
+                cancelAnimationFrame(animationFrameId);
+                clearInterval(wallIntervalId);
+                clearInterval(timerIntervalId);
+                return;
+            }
+
+            // ボールの位置を更新
+            balls.forEach(ball => {
+                ball.x += ball.dx;
+                ball.y += ball.dy;
+
+                // 境界の衝突
+                if (ball.x + ball.radius > canvas.width || ball.x - ball.radius < 0) {
+                    ball.dx *= -1;
+                }
+                if (ball.y - ball.radius < 0) {
+                    ball.dy *= -1;
+                }
+            });
+
+            // 落ちてくる壁の位置を更新
+            walls.forEach(wall => {
+                wall.y += 1; // 落ちる速度
+            });
+
+            // ボールが下部に落ちたら削除
+            balls = balls.filter(ball => ball.y + ball.radius <= canvas.height);
+
+            // すべてのボールがなくなったらゲームオーバー
+            if (balls.length === 0) {
+                gameActive = false;
+                showMessage("ゲームオーバー！ボールがすべてなくなりました。", "もう一度プレイ");
+                cancelAnimationFrame(animationFrameId);
+                clearInterval(wallIntervalId);
+                clearInterval(timerIntervalId);
+                return;
+            }
+
+            // 壁がパドルラインに到達したらゲームオーバー
+            const wallReachedBottom = walls.some(wall => wall.y + wall.height > paddle.y);
+            if (wallReachedBottom) {
+                gameActive = false;
+                showMessage("ゲームオーバー！壁が底に到達しました。", "もう一度プレイ");
+                cancelAnimationFrame(animationFrameId);
+                clearInterval(wallIntervalId);
+                clearInterval(timerIntervalId);
+                return;
+            }
+
+            checkCollision();
+            draw();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // ゲーム開始
+        function startGame() {
+            hideMessage();
+            if (gameActive) return;
+
+            resetGame();
+            gameActive = true;
+            startButton.style.display = 'none';
+            resetButton.style.display = 'block';
+
+            // 10秒ごとに新しい壁を生成
+            wallIntervalId = setInterval(createFallingWall, 10000);
+
+            // 1秒ごとにタイマーを更新
+            startTime = Date.now();
+            timerIntervalId = setInterval(() => {
+                time = Math.floor((Date.now() - startTime) / 1000);
+            }, 1000);
+
+            gameLoop();
+        }
+
+        // パドルの操作
+        canvas.addEventListener('mousemove', (e) => {
+            if (!gameActive) return;
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            paddle.x = mouseX - paddle.width / 2;
+            if (paddle.x < 0) paddle.x = 0;
+            if (paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
+            draw();
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (!gameActive) return;
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touchX = e.touches[0].clientX - rect.left;
+            paddle.x = touchX - paddle.width / 2;
+            if (paddle.x < 0) paddle.x = 0;
+            if (paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
+            draw();
+        }, { passive: false });
+
+        startButton.addEventListener('click', startGame);
+        resetButton.addEventListener('click', () => {
+            cancelAnimationFrame(animationFrameId);
+            clearInterval(wallIntervalId);
+            clearInterval(timerIntervalId);
+            resetGame();
+        });
+        messageButton.addEventListener('click', () => {
+            hideMessage();
+            startGame();
+        });
+
+        // 初期描画
+        resetGame();
+    });
+</script>
+
+</body>
+</html>
